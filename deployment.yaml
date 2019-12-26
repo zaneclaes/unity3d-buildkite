@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: btd
+  labels:
+    name: btd
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unity3d-buildkite
+  namespace: btd
+  labels:
+    app: unity3d-buildkite
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: unity3d-buildkite
+  template:
+    metadata:
+      name: unity3d-buildkite
+      namespace: btd
+      labels:
+        app: unity3d-buildkite
+    spec:
+      volumes:
+      - name: dockersock
+        hostPath:
+          path: /var/run/docker.sock
+      - name: id-rsa
+        hostPath:
+          path: /Users/zaneclaes/.ssh/id_rsa
+          type: File
+      - name: unity-ulf
+        hostPath:
+          path: /Users/zaneclaes/unity.ulf
+          type: File
+      containers:
+      - name: unity3d-buildkite
+        image: inzania/unity3d-buildkite:latest
+        volumeMounts:
+        - name: id-rsa
+          mountPath: /root/.ssh/id_rsa
+        - name: unity-ulf
+          mountPath: /root/.local/share/unity3d/Unity/Unity_lic.ulf
+        - name: dockersock
+          mountPath: "/var/run/docker.sock"
+        env:
+        - name: BUILDKITE_AGENT_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: BUILDKITE_AGENT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: unity3d-buildkite
+              key: BUILDKITE_AGENT_TOKEN
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: unity3d-buildkite
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: unity3d-buildkite
+              key: AWS_SECRET_ACCESS_KEY
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            secretKeyRef:
+              name: unity3d-buildkite
+              key: AWS_DEFAULT_REGION
