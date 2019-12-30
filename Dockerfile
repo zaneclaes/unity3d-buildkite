@@ -1,6 +1,5 @@
-ARG UNITY_TAG
-
-FROM gableroux/unity3d:${UNITY_TAG}
+ARG BASE_IMAGE
+FROM $BASE_IMAGE
 
 # Dependencies
 RUN apt-get -y update && apt-get install -y  \

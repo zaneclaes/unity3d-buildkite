@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "unity3d-buildkite.fullname" . }}
+  labels:
+    {{- include "unity3d-buildkite.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "unity3d-buildkite.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "unity3d-buildkite.selectorLabels" . | nindent 8 }}
+    spec:
+    {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+      - name: dockersock
+        hostPath:
+          path: /var/run/docker.sock
+      {{- if .Values.buildkite.ssh_file }}
+      - name: id-rsa
+        hostPath:
+          path: {{ .Values.buildkite.ssh_file }}
+          type: File
+      {{- end }}
+      {{- if .Values.unity.licence_file }}
+      - name: unity-ulf
+        hostPath:
+          path: {{ .Values.unity.licence_file }}
+          type: File
+      {{- end }}
+      containers:
+        {{- $root := . -}}
+        {{- range .Values.unity.modules }}
+        {{- if . }}
+        - name: "unity-{{ . }}"
+        {{- else }}
+        - name: unity
+        {{- end }}
+          securityContext:
+            {{- toYaml $root.Values.securityContext | nindent 12 }}
+          {{- if . }}
+          image: "{{ $root.Values.image.repository }}:{{ $root.Values.unity.version }}-{{ . }}"
+          {{- else }}
+          image: "{{ $root.Values.image.repository }}:{{ $root.Values.unity.version }}"
+          {{- end }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+          volumeMounts:
+          {{- if $root.Values.buildkite.ssh_file }}
+          - name: id-rsa
+            mountPath: /root/.ssh/id_rsa
+          {{- end }}
+          {{- if $root.Values.unity.licence_file }}
+          - name: unity-ulf
+            mountPath: /root/.local/share/unity3d/Unity/Unity_lic.ulf
+          {{- end }}
+          - name: dockersock
+            mountPath: "/var/run/docker.sock"
+          env:
+          - name: BUILDKITE_AGENT_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: BUILDKITE_AGENT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "unity3d-buildkite.fullname" $root }}
+                key: BUILDKITE_AGENT_TOKEN
+          - name: BUILDKITE_AGENT_TAGS
+            value: "unity_module={{ . }}"
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "unity3d-buildkite.fullname" $root }}
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "unity3d-buildkite.fullname" $root }}
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_DEFAULT_REGION
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "unity3d-buildkite.fullname" $root }}
+                key: AWS_DEFAULT_REGION
+          resources:
+            {{- toYaml $root.Values.resources | nindent 12 }}
+        {{- end }}
+      {{- with $root.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml $root | nindent 8 }}
+      {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
