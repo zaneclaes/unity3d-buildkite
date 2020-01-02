@@ -14,14 +14,14 @@ def get_version_tag(version, component):
     return tag
 
 # Build the
-def build(unity_version, component = None, registry = 'inzania/unity3d-buildkite'):
+def build(unity_version, src, dst, component, push):
     tag = get_version_tag(unity_version, component)
-    img = f'{registry}:{tag}'
+    img = f'{dst}:{tag}'
     print(f'Building {img}')
-    bi = f'gableroux/unity3d:{tag}'
+    bi = f'{src}:{tag}'
     subprocess.run(f'docker build --build-arg BASE_IMAGE={bi} . -t {img}', shell=True, check=True)
-    subprocess.run(f'docker tag {img} {registry}:{get_version_tag("latest", component)}', shell=True, check=True)
-    subprocess.run(f'docker push {registry}', shell=True, check=True)
+    subprocess.run(f'docker tag {img} {dst}:{get_version_tag("latest", component)}', shell=True, check=True)
+    if push: subprocess.run(f'docker push {dst}', shell=True, check=True)
 
 # Check Gableroux's repo for the published versions
 def get_unity_ci_versions(fn):
@@ -57,6 +57,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--components', '-c', help='Comma-separated components to build')
+    parser.add_argument('--src', default = 'gableroux/unity3d',
+        help='The repository with the base image')
+    parser.add_argument('--dst', default = 'inzania/unity3d-buildkite',
+        help='The repository with which to tag the built image')
+    parser.add_argument('--no-push', action='store_true',
+        help='Push the built images?')
     opts = parser.parse_args()
 
     if opts.components: components = opts.components.split(',')
@@ -75,4 +81,4 @@ if __name__ == "__main__":
     else:
         unity_version = latest
 
-    for c in components: build(unity_version, c)
+    for c in components: build(unity_version, opts.src, opts.dst, c, not opts.no_push)

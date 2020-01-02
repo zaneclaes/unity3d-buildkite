@@ -5,21 +5,22 @@
 replicaCount: 1
 
 unity:
-  version: 2019.2.16f1
-  licence_file: ""
-  modules:
+  version: 2019.2.16f1 # Must exist as a docker tag in the image.repository
+  licence_file: "" # The unity.ulf licence file
+  modules: # One container will be created for each of the following:
     - ""
     - ios
     - android
+    - mac
+    - windows
+    - webgl
+    - facebook
+
+env: # Each of these will be stored as secrets and passed in to each container:
+  BUILDKITE_AGENT_TOKEN: ""
 
 buildkite:
-  ssh_file: ""
-  agentToken: ""
-
-aws:
-  accessKeyId: ""
-  secretAccessKey: ""
-  defaultRegion: ""
+  ssh_file: "" # This will be mounted as /.ssh/id_rsa
 
 image:
   repository: inzania/unity3d-buildkite

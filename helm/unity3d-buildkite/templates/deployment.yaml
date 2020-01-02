@@ -68,28 +68,15 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.name
-          - name: BUILDKITE_AGENT_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: {{ include "unity3d-buildkite.fullname" $root }}
-                key: BUILDKITE_AGENT_TOKEN
           - name: BUILDKITE_AGENT_TAGS
             value: "unity_module={{ . }}"
-          - name: AWS_ACCESS_KEY_ID
+          {{- range $key, $val := $root.Values.env }}
+          - name: {{ $key }}
             valueFrom:
               secretKeyRef:
                 name: {{ include "unity3d-buildkite.fullname" $root }}
-                key: AWS_ACCESS_KEY_ID
-          - name: AWS_SECRET_ACCESS_KEY
-            valueFrom:
-              secretKeyRef:
-                name: {{ include "unity3d-buildkite.fullname" $root }}
-                key: AWS_SECRET_ACCESS_KEY
-          - name: AWS_DEFAULT_REGION
-            valueFrom:
-              secretKeyRef:
-                name: {{ include "unity3d-buildkite.fullname" $root }}
-                key: AWS_DEFAULT_REGION
+                key: {{ $key }}
+          {{- end }}
           resources:
             {{- toYaml $root.Values.resources | nindent 12 }}
         {{- end }}
