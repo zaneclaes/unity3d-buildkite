@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import requests, yaml, subprocess, argparse, json
-
+import os, requests, yaml, subprocess, argparse, json
 
 def download_unity_ci_dockerfile(src, dst = None):
     if not dst: dst = src
@@ -17,15 +16,26 @@ def _docker_build(img, dockerfile, build_args = [], directory = './docker'):
     build = 'docker build'
     for a in build_args: build += f' --build-arg {a}'
     bf = f'-f {dockerfile}' if dockerfile else ''
-    print(f'{build} {bf} {directory} -t {img}')
+    print('-------------------------------------------')
+    print(f'building {img}')
+    print('-------------------------------------------')
     subprocess.run(f'{build} {bf} {directory} -t {img}', shell=True, check=True)
 
 # Build the final image
 def build(unity_version, src, dst, component, push):
     tag = get_version_tag(unity_version, component)
     img = f'{dst}:{tag}'
+    bi = f'{src}:{tag}'
+
+    # Build a platform-specific intermediate?
+    cf = f'docker/{component}.Dockerfile'
+    if os.path.isfile(cf):
+        ci = f'inzania/unity3d-{component}'
+        _docker_build(ci, cf, [f'BASE_IMAGE={bi}'])
+        bi = ci
+
     print(f'Building {img}')
-    _docker_build(img, 'docker/buildkite.Dockerfile', [f'BASE_IMAGE={src}:{tag}'])
+    _docker_build(img, 'docker/buildkite.Dockerfile', [f'BASE_IMAGE={bi}'])
     subprocess.run(f'docker tag {img} {dst}:{get_version_tag("latest", component)}', shell=True, check=True)
     if push: subprocess.run(f'docker push {dst}', shell=True, check=True)
 
