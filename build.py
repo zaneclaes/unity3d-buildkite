@@ -13,13 +13,19 @@ def get_version_tag(version, component):
     if component and len(component) > 0: tag += '-' + component
     return tag
 
-# Build the
+def _docker_build(img, dockerfile, build_args = [], directory = './docker'):
+    build = 'docker build'
+    for a in build_args: build += f' --build-arg {a}'
+    bf = f'-f {dockerfile}' if dockerfile else ''
+    print(f'{build} {bf} {directory} -t {img}')
+    subprocess.run(f'{build} {bf} {directory} -t {img}', shell=True, check=True)
+
+# Build the final image
 def build(unity_version, src, dst, component, push):
     tag = get_version_tag(unity_version, component)
     img = f'{dst}:{tag}'
     print(f'Building {img}')
-    bi = f'{src}:{tag}'
-    subprocess.run(f'docker build --build-arg BASE_IMAGE={bi} . -t {img}', shell=True, check=True)
+    _docker_build(img, 'docker/buildkite.Dockerfile', [f'BASE_IMAGE={src}:{tag}'])
     subprocess.run(f'docker tag {img} {dst}:{get_version_tag("latest", component)}', shell=True, check=True)
     if push: subprocess.run(f'docker push {dst}', shell=True, check=True)
 
@@ -48,7 +54,7 @@ def build_unity_base_images(components, registry = 'inzania/unity3d'):
     for c in components:
         img = f'{registry}/{get_version_tag(unity_version, c)}'
         print(f'Building {img}')
-        cmd = f'docker build --build-arg DOWNLOAD_URL={download_url} ./docker -t {img}'
+        _docker_build(img, 'unity.Dockerfile', [f'DOWNLOAD_URL={download_url}'])
         subprocess.run(cmd, shell=True, check=True)
 
 

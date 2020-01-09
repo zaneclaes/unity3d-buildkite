@@ -38,8 +38,7 @@ class Unity(Maker):
                 if os.path.isfile(ffn):
                     shutil.copy(ffn, uci_dest)
 
-        # Build Unity game.
-        self._unity_exec(self.make.opts.work, bin_dir, {
+        build_flags = {
             'Name': name,
             'BuildTarget': self.make.opts.platform,
             'OutputDir': output,
@@ -47,7 +46,13 @@ class Unity(Maker):
             'Version': self.make.semver,
             'Commit': self.make.opts.commit,
             'ReportFile': report_fp
-        })
+        }
+        if self.make.opts.platform == 'Android':
+            build_flags['AndroidSdkRoot'] = '/opt/android-sdk-linux'
+            build_flags['JdkPath'] = '/usr/lib/jvm/java-8-openjdk-amd64'
+
+        # Build Unity game.
+        self._unity_exec(self.make.opts.work, bin_dir, build_flags)
 
         success = False
         if os.path.isfile(report_fp):

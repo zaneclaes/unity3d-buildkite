@@ -140,60 +140,10 @@ namespace Editor.UnityCI {
         PlayerSettings.bundleVersion = _version.MajorMinorPatch.ToString();
       }
       if (bt == UnityEditor.BuildTarget.iOS) {
-        Log.Information("Generating Assets/link.xml...");
-//        GenerateLinkXml();
         PlayerSettings.iOS.buildNumber = _version.Build;
         PlayerSettings.SetArchitecture(BuildTargetGroup.iOS, 1); // ARM64
         Log.Information("Using iOS buildNumber {name}", PlayerSettings.iOS.buildNumber);
       }
-    }
-
-    /// <summary>
-    /// Generates Assets/link.xml file for AOT complination required on some platforms.
-    /// </summary>
-    private void GenerateLinkXml() {
-      Regex regex = new Regex("using (DataSculpt)\\.(.*);");
-      var csFiles = Directory.EnumerateFiles("Assets/", "*.cs", SearchOption.AllDirectories);
-      Dictionary<string, List<string>> links = new Dictionary<string, List<string>>() {
-        {"DataSculpt", new List<string>()},
-        {"DataSculptUnity", new List<string>()},
-      };
-      foreach (string fn in csFiles) {
-        string src = File.ReadAllText(fn);
-        MatchCollection matches = regex.Matches(src);
-        foreach (Match match in matches) {
-          string ns = match.Value.Substring("using ".Length, match.Length - "using ".Length - 1);
-          string[] parts = ns.Split(new char[] {'.'});
-          string top = parts.First();
-          if (links.ContainsKey(top) && !links[top].Contains(ns)) {
-            links[top].Add(ns);
-          }
-        }
-      }
-
-      links["DataSculpt"].Add("DataSculpt.Utils.Listifier");
-      links["DataSculpt"].Add("DataSculpt.Data.Validators");
-      links["DataSculpt"].Add("DataSculpt.Data.Hydrators");
-      links["DataSculpt"].Add("DataSculpt.Data.Hydrators.Associations");
-      links["DataSculpt"].Add("DataSculpt.Data.Security.Policies");
-      links["DataSculpt"].Add("MXSqliteData");
-      links["DataSculptUnity"].Add("DataSculptUnity");
-      links["DataSculptUnity"].Add("DataSculptUnity.Logging");
-      List<string> lines = new List<string>() {"<linker>"};
-      foreach (string lib in links.Keys) {
-        lines.Add($"  <assembly fullname=\"{lib}\">");
-        lines.Add($"    <namespace fullname=\"{lib}\" preserve=\"all\"/>");
-        lines.Add($"    <namespace fullname=\"{lib}.*\" preserve=\"all\"/>");
-        foreach (string usng in links[lib]) {
-          lines.Add($"    <namespace fullname=\"{usng}\" preserve=\"all\"/>");
-          lines.Add($"    <namespace fullname=\"{usng}.*\" preserve=\"all\"/>");
-        }
-
-        lines.Add("  </assembly>");
-      }
-
-      lines.Add("</linker>");
-      File.WriteAllText("Assets/link.xml", string.Join("\n", lines.ToArray()));
     }
 
     private void PostProcess(BuildTarget bt) {
