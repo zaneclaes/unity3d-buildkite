@@ -5,10 +5,10 @@
 replicaCount: 1
 
 unity:
-  version: 2019.2.16f1 # Must exist as a docker tag in the image.repository
+  version: 2019.2.18f1 # Must exist as a docker tag in the image.repository
   licence_file: "" # The unity.ulf licence file
   modules: # One container will be created for each of the following:
-    - ""
+    - linux
     - ios
     - android
     - mac

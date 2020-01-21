@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+if [[ ! -z "$SSH_KEYS" ]]; then
+  echo "Copying SSH keys from environment..."
+
+  mkdir -p /var/lib/buildkite-agent/.ssh
+  echo "$SSH_KEYS" > /var/lib/buildkite-agent/.ssh/id_rsa
+  chmod 600 /var/lib/buildkite-agent/.ssh/id_rsa
+
+  mkdir -p /root/.ssh
+  echo "$SSH_KEYS" > /root/.ssh/id_rsa
+  chmod 600 /root/.ssh/id_rsa
+
+  unset SSH_KEYS
+fi
+
+if [[ ! -z "$UNITY_LICENSE" ]]; then
+  echo "Copying Unity license from environment..."
+
+  echo "$UNITY_LICENSE" > /var/lib/buildkite-agent/.local/share/unity3d/Unity/Unity_lic.ulf
+  chown buildkite-agent:buildkite-agent /var/lib/buildkite-agent/.local/share/unity3d/Unity/Unity_lic.ulf
+
+  mkdir -p /root/.local/share/unity3d/Unity/
+  echo "$UNITY_LICENSE" > /root/.local/share/unity3d/Unity/Unity_lic.ulf
+
+  unset UNITY_LICENSE
+elif [[ ! -z "$UNITY_USERNAME" && ! -z "$UNITY_PASSWORD" ]]; then
+  su -m - "buildkite-agent" -c "/bin/ci/make.py unity activate"
+fi

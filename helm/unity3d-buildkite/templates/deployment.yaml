@@ -24,18 +24,6 @@ spec:
       - name: dockersock
         hostPath:
           path: /var/run/docker.sock
-      {{- if .Values.buildkite.ssh_file }}
-      - name: id-rsa
-        hostPath:
-          path: {{ .Values.buildkite.ssh_file }}
-          type: File
-      {{- end }}
-      {{- if .Values.unity.licence_file }}
-      - name: unity-ulf
-        hostPath:
-          path: {{ .Values.unity.licence_file }}
-          type: File
-      {{- end }}
       containers:
         {{- $root := . -}}
         {{- range .Values.unity.modules }}
@@ -53,14 +41,6 @@ spec:
           {{- end }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           volumeMounts:
-          {{- if $root.Values.buildkite.ssh_file }}
-          - name: id-rsa
-            mountPath: /root/.ssh/id_rsa
-          {{- end }}
-          {{- if $root.Values.unity.licence_file }}
-          - name: unity-ulf
-            mountPath: /root/.local/share/unity3d/Unity/Unity_lic.ulf
-          {{- end }}
           - name: dockersock
             mountPath: "/var/run/docker.sock"
           env:

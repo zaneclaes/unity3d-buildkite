@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-import os, requests, yaml, subprocess, argparse, json
+import os, requests, yaml, subprocess, argparse, json, shutil
 
-def download_unity_ci_dockerfile(src, dst = None):
-    if not dst: dst = src
-    url = f'https://gitlab.com/gableroux/unity3d/raw/master/docker/{src}'
-    with open(f'docker/{dst}', 'w+') as f: f.write(requests.get(url).text)
+component_map = {
+    None: 'Unity',
+    'linux': 'Unity',
+    'ios': 'iOS',
+    'android': 'Android',
+    'mac': 'Mac,Mac-Mono',
+    'windows': 'Windows,Windows-Mono',
+    'webgl': 'WebGL',
+    'facebook': 'Facebook-Games'
+}
 
 # Determine the appropriate docker tag for a version+component
 def get_version_tag(version, component):
@@ -12,89 +18,84 @@ def get_version_tag(version, component):
     if component and len(component) > 0: tag += '-' + component
     return tag
 
-def _docker_build(img, dockerfile, build_args = [], directory = './docker'):
-    build = 'docker build'
-    for a in build_args: build += f' --build-arg {a}'
-    bf = f'-f {dockerfile}' if dockerfile else ''
+# Print a message wrapped with div-lines
+def _div(msg):
     print('-------------------------------------------')
-    print(f'building {img}')
+    print(msg)
     print('-------------------------------------------')
-    subprocess.run(f'{build} {bf} {directory} -t {img}', shell=True, check=True)
-
-# Build the final image
-def build(unity_version, src, dst, component, push):
-    tag = get_version_tag(unity_version, component)
-    img = f'{dst}:{tag}'
-    bi = f'{src}:{tag}'
-
-    # Build a platform-specific intermediate?
-    cf = f'docker/{component}.Dockerfile'
-    if os.path.isfile(cf):
-        ci = f'inzania/unity3d-{component}'
-        _docker_build(ci, cf, [f'BASE_IMAGE={bi}'])
-        bi = ci
-
-    print(f'Building {img}')
-    _docker_build(img, 'docker/buildkite.Dockerfile', [f'BASE_IMAGE={bi}'])
-    subprocess.run(f'docker tag {img} {dst}:{get_version_tag("latest", component)}', shell=True, check=True)
-    if push: subprocess.run(f'docker push {dst}', shell=True, check=True)
-
-# Check Gableroux's repo for the published versions
-def get_unity_ci_versions(fn):
-    url = f'https://gitlab.com/gableroux/unity3d/raw/master/ci-generator/{fn}'
-    data = yaml.load(requests.get(url).text)
-    return data
 
 # Build new unity3d versions from scratch
-def build_unity_base_images(components, registry = 'inzania/unity3d'):
+def build(version, components, registry, push, quiet):
     re = requests.get('https://public-cdn.cloud.unity3d.com/hub/prod/releases-linux.json').text
     releases = json.loads(re)
     choices = {}
+    groups = {}
+    versions = {}
 
     for group in releases:
+        versions[group] = []
         for release in releases[group]:
             v = release["version"]
             url = release["downloadUrl"]
+            versions[group].append(v)
+            groups[v] = group
             choices[v] = url.replace('LinuxEditorInstaller/Unity.tar.xz', f'UnitySetup-{v}')
-            print(f'{len(choices)}: [{group}] {v}')
-    c = int(input(f'Which version (1-{len(choices)})? ')) - 1
-    unity_version = list(choices)[c]
-    download_url = choices[unity_version]
+            if not version:
+                print(f'{len(choices)}: [{group}] {v}')
+    if not version:
+        c = int(input(f'Which version (1-{len(choices)})? ')) - 1
+        version = list(choices)[c]
+    if not version in list(choices):
+        raise Exception(f'Version {version} is not currently available for download.')
+    download_url = choices[version]
+    group = groups[version]
+    if group == 'official':
+        if version == versions['official'][len(versions['official'])-1]:
+            group = 'latest'
+        else:
+            group = version.split('.')[0]
+    elif group == 'beta' and 'a' in version:
+        group = 'alpha'
 
     for c in components:
-        img = f'{registry}/{get_version_tag(unity_version, c)}'
-        print(f'Building {img}')
-        _docker_build(img, 'unity.Dockerfile', [f'DOWNLOAD_URL={download_url}'])
-        subprocess.run(cmd, shell=True, check=True)
+        img = f'{registry}:{get_version_tag(version, c)}'
+        build_args = [f'DOWNLOAD_URL={download_url}', f'COMPONENTS={component_map[c]}']
+        _div(f'Building {img} ({group}) with components: {component_map[c]}')
 
+        # Create a single Dockerfile of all the component Dockerfiles
+        df = 'docker/Dockerfile'
+        if os.path.isfile(df): os.remove(df)
+        cfs = [f'docker/base.Dockerfile', f'docker/{c}.Dockerfile', 'docker/unity.Dockerfile']
+        with open(df, 'w+') as dst:
+            for cf in cfs:
+                if not os.path.isfile(cf): continue
+                with open(cf) as src:  dst.write(src.read())
+
+        # Build & Push docker image
+        build = 'docker build'
+        if quiet: build += ' -q'
+        for a in build_args: build += f' --build-arg {a}'
+        subprocess.run(f'{build} ./docker -t {img}', shell=True, check=True)
+        if push:
+            _div(f'pushing {img}')
+
+            latest = f'{registry}:{get_version_tag(group, c)}'
+            subprocess.run(f'docker tag {img} {latest}', shell=True, check=True)
+            subprocess.run(f'docker push {registry} &', shell=True, check=True)
 
 if __name__ == "__main__":
-    components = [None, 'ios', 'android', 'mac', 'windows', 'webgl', 'facebook']
-
     parser = argparse.ArgumentParser()
+    parser.add_argument('--version', '-v',  help='Which Unity version to build')
     parser.add_argument('--components', '-c', help='Comma-separated components to build')
-    parser.add_argument('--src', default = 'gableroux/unity3d',
-        help='The repository with the base image')
-    parser.add_argument('--dst', default = 'inzania/unity3d-buildkite',
+    parser.add_argument('--dst', '-d', default = 'inzania/unity3d-buildkite',
         help='The repository with which to tag the built image')
     parser.add_argument('--no-push', action='store_true',
         help='Push the built images?')
+    parser.add_argument('--verbose', action='store_true',
+        help='Include Docker output?')
     opts = parser.parse_args()
 
     if opts.components: components = opts.components.split(',')
+    else: components = list(component_map)
 
-    vers = get_unity_ci_versions('unity_versions.yml')
-    latest = list(vers)[0]
-    b = input(f'Build latest version? ({latest})? [Y/n]: ')
-    if b.lower() == 'n':
-        vers = get_unity_ci_versions('unity_versions.old.yml')
-        x = 0
-        for v in vers:
-            print(f'{x}: {v}')
-            x += 1
-        b = int(input(f'Which version? '))
-        unity_version = list(vers)[b]
-    else:
-        unity_version = latest
-
-    for c in components: build(unity_version, opts.src, opts.dst, c, not opts.no_push)
+    build(opts.version, components, opts.dst, not opts.no_push, not opts.verbose)

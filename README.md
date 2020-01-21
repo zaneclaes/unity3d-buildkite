@@ -38,6 +38,16 @@ The first parameter was the name (just like you'd type in when you use the "Buil
 [INFO] [Unity] built 43889536b in 00:00:30.3046029
 ```
 
+### Building on iOS
+
+The build agent will automatically run `pod install`, generating the appropriate workspace file. The `ios` agent also has `xcbuild` and `ninja` installed. However, due to [various reasons](https://github.com/facebook/xcbuild/issues/37), a Linux machine cannot actually build for an iOS target (especially when assets are involved). The follownig command, for example, makes it to the `CompileAssetCatalog` step before failing:
+
+```
+xcbuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -project Unity-iPhone -configuration ReleaseForRunning -destination 'Generic iOS Device'
+```
+
+To actually build the `.app`, you can download the resulting project artifact onto a Mac OSX build machine in order to build the project with Xcode. `xcbuild` may still be useful for running unit tests and the like.
+
 ### Versioning
 
 Careful eyes will notice that the CI automatically writes a `Version.txt` and `Commit.txt` to the `Resources` directory, so that the runtime project can be aware of these values. You can use the `git tag -a v0.0.1` to specify the current SemVer. The CI will automatically determine the branch and build number (`master` and `59` in the example above), as well as the Git commit SHA.
@@ -66,22 +76,22 @@ Here is my pipeline for one of the games I'm working on. It builds for Linux, th
 
 ```
 steps:
-  - command: '/bin/ci/make.py unity build cardgrid StandaloneLinux64 "Assets/Scenes/Server.unity" && $(aws ecr get-login | sed "s/-e none//") && /bin/ci/make.py docker build cardgrid StandaloneLinux64 823305940476.dkr.ecr.us-east-2.amazonaws.com'
+  - command: '/bin/ci/agent.sh unity build sample-project StandaloneLinux64 "Assets/Scenes/Server.unity" && /bin/ci/make.py docker build cardgrid StandaloneLinux64 inzania/sample-project'
     label: ":linux: server :docker:"
     agents:
       unity_module: "true"
     artifact_paths:
       - "bin/StandaloneLinux64/**"
 
-  - command: '/bin/ci/make.py unity build cardgrid Android "Assets/Scenes/Client.unity"'
+  - command: '/bin/ci/agent.sh unity build sample-project Android "Assets/Scenes/Client.unity"'
     label: ":android: android"
     agents:
       unity_module: "android"
     artifact_paths:
       - "bin/Android/**"
 
-  - command: '/bin/ci/make.py unity build cardgrid iOS "Assets/Scenes/Client.unity"'
-    label: ":iphone: iOS"
+  - command: '/bin/ci/agent.sh unity build sample-project iOS "Assets/Scenes/Client.unity"'
+    label: ":ios: iOS"
     agents:
       unity_module: "ios"
     artifact_paths:
@@ -90,13 +100,22 @@ steps:
 
 ## Deployment
 
-Before you deploy, you'll need to get a Unity license file. Please see the [How to Activate](https://gitlab.com/gableroux/unity3d-gitlab-ci-example#how-to-activate) instructions from Gableroux. Once you have the `.ulf` file, you can mount it directly into the docker image. For example:
+The easiest way to deploy is to use the Helm chart, below. But you could also just run the Docker container:
 
 ```
-docker run --rm \
-  -v "unity.ulf:/root/.local/share/unity3d/Unity/Unity_lic.ulf" \
-  inzania/unity3d-buildkite:latest
+docker run --rm inzania/unity3d-buildkite:latest
 ```
+
+However, you will need a Unity license. Once the image is running, open a shell in the container and run:
+
+```
+su -m - "buildkite-agent" -c "/bin/ci/make.py unity activate --unity_username=XXX --unity_password=YYY"
+```
+
+This will output the license file and instructions for activating it. Once done, you can set the license file either by mounting it to `/var/lib/buildkite-agent/.local/share/unity3d/Unity/Unity_lic.ulf` or with an enviroment variable. There are two special environment variables:
+
+* `SSH_KEYS`: if set, the contents will be written to the `~/.ssh/id_rsa` file as a Buildkite pre-checkout hook.
+* `UNITY_LICENSE`: if set, the contents will be written to the Unity license file location for activation.
 
 ### Kubernetes Helm Chart
 
@@ -104,11 +123,12 @@ Included in this repository is a Helm chart to make deployment easy. After check
 
 ```
 helm upgrade --install builder helm/unity3d-buildkite \
-  --set "unity.licence_file=/path/to/unity.ulf" \
+  --set "env.UNITY_LICENSE=contents_of_license_file" \
   --set "env.BUILDKITE_AGENT_TOKEN=foo"
 ```
 
 Anything you provide to `--set "env.XXX=YYY"` will be stored as a secret and passed as an environment value. This makes it useful for configuring Buildkite, passing in credentials, etc. Other relevant configuration values can be found in `helm/unity3d-buildkite/values.yaml` within this repository.
+
 
 ## Versions & Building
 
