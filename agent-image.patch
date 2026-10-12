@@ -1,0 +1,48 @@
+diff --git a/producer-agent.Dockerfile.before b/agent.Dockerfile
+index d029030..42ee668 100644
+--- a/producer-agent.Dockerfile.before
++++ b/agent.Dockerfile
+@@ -37,6 +37,7 @@ RUN apt-get update -qq -y && apt-get upgrade -qq -y && apt-get install -qq -y --
+       unzip \
+       zip \
+       buildah \
++      crun \
+       netavark \
+       python3-pip \
+       libatomic1 \
+@@ -85,7 +86,7 @@ RUN --mount=type=bind,from=dl-awscli,target=/downloads \
+   && aws --version
+ 
+ # Dotnet
+-ENV DOTNET_ROOT=/root/dotnet
++ENV DOTNET_ROOT=/usr/share/dotnet
+ ENV PATH=$PATH:$DOTNET_ROOT:/root/.dotnet/tools
+ ARG DOTNET_ARCH="x64"
+ 
+@@ -98,6 +99,7 @@ RUN --mount=type=bind,from=dl-dotnet,target=/downloads \
+     fetch-cached "https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_VERSION}/dotnet-sdk-${DOTNET_VERSION}-linux-${DOTNET_ARCH}.tar.gz" /tmp/dotnet-sdk.tar.gz \
+   && mkdir -p "$DOTNET_ROOT" \
+   && tar zxf /tmp/dotnet-sdk.tar.gz -C "$DOTNET_ROOT" \
++  && chmod -R a+rX "$DOTNET_ROOT" \
+   && rm /tmp/dotnet-sdk.tar.gz \
+   && dotnet --version
+ ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+diff --git a/producer-README.md.before b/README.md
+index 0278b0b..f3bc158 100644
+--- a/producer-README.md.before
++++ b/README.md
+@@ -82,6 +82,14 @@ in the same change.
+ printed digest in moongate's `agent-amd64-patch.yaml`, then set unity.Dockerfile's `BASE_IMAGE` to it
+ and rebuild the lane.
+ 
++The agent image includes `crun` for Buildah's OCI execution. Development snapshots must run as
++an unprivileged UID with capabilities dropped, networking disabled and private namespaces;
++the privileged agent's credentials and host mounts never belong in that execution root.
++The SDK lives at `/usr/share/dotnet` and is readable and executable by that UID. Qualify the
++actual OCI execution against the newly built digest before changing the deployed image pin.
++Installing a runtime alone does not establish sandbox isolation. Cabin deployment follows
++moongate's existing mutation policy and requires its specific human authorization.
++
+ How the installer lays out modules (verified on 6000.6.5f1): the editor and `TAR_XZ` modules are
+ rooted at the install root; `PKG` modules are xar archives whose cpio payload is rooted at the module's
+ `destination` (their macOS pre/postinstall scripts are not run); every download is md5-checked against

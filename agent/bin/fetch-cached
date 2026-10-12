@@ -1,0 +1,13 @@
+#!/bin/sh
+# fetch-cached <url> <dest>: copy <url>'s file from the host cache that build-agent.py bind-mounts at
+# /downloads, or download it when the build was not given one (loudly, since downloads are expensive).
+set -eu
+url="$1" dest="$2"
+cached="/downloads/${url##*/}"
+if [ -f "$cached" ]; then
+  echo "fetch-cached: ${url##*/} from the host cache"
+  cp "$cached" "$dest"
+else
+  echo "fetch-cached: ${url##*/} is NOT in the host cache; downloading $url" >&2
+  curl -fsSL "$url" -o "$dest"
+fi
