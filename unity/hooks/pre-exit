@@ -1,0 +1,12 @@
+#!/bin/bash
+# Returns what pre-command took, even when the command failed or was cancelled. A failed return
+# must not fail the job; on the hooks path it leaves a device on the seat (README "Licensing").
+set -uo pipefail
+
+[[ "${UNITY_LICENSE_SKIP:-}" == "1" ]] && exit 0
+case "${UNITY_LICENSE_MODE:-persisted}" in
+  hooks|floating)
+    echo "--- :unity: return license (${UNITY_LICENSE_MODE})"
+    unity-license return || echo "[unity] license return failed; see README 'Licensing'" ;;
+esac
+exit 0

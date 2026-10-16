@@ -1,0 +1,53 @@
+{
+  "name": "@openworkshop/maker-builder",
+  "version": "0.4.13-beta.564",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "echo 'nothing to do'",
+    "lint": "eslint . --ext .js --fix"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpenWorkShop/MakerHub.git"
+  },
+  "author": "OpenWorkShop, Inc.",
+  "license": "GPL-3.0-or-later",
+  "bin": {
+    "maker-env": "src/env.js",
+    "maker-electron": "src/electron.js",
+    "maker-container": "src/container.js",
+    "maker-npm": "src/npm.js",
+    "maker-nuget": "src/nuget.js",
+    "maker-pipeline": "src/pipeline.js",
+    "maker-docs": "src/docs.js"
+  },
+  "dependencies": {
+    "child_process": "^1.0.2",
+    "command-exists": "^1.2.9",
+    "dotenv": "^10.0.0",
+    "envsub": "^4.0.7",
+    "eslint-gitignore": "^0.1.0",
+    "fs-extra": "^10.0.0",
+    "gh-release": "^6.0.0",
+    "js-yaml": "^4.1.0",
+    "minimatch": "^3.0.4",
+    "rimraf": "^3.0.2",
+    "vs-parse": "^3.1.1",
+    "wait-on": "^6.0.0",
+    "is-reachable": "^5.0.0",
+    "yargs": "^17.0.1",
+    "node-watch": "^0.7.1",
+    "simple-git": "^2.42.0"
+  },
+  "devDependencies": {
+    "@babel/eslint-parser": "^7.15.4",
+    "@babel/eslint-plugin": "^7.14.5",
+    "rollup-plugin-generate-package-json": "^3.2.0",
+    "rollup": "^2.53.1",
+    "rollup-plugin-copy": "^3.4.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  }
+}

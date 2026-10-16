@@ -1,137 +1,137 @@
-## Unity3D-Buildkite
+# unity3d-buildkite
 
-A docker container that can build Unity projects, with support for Buildkite (CI). [Read all about this project](https://www.technicallywizardry.com/open-source-unity-cloud-build-ci-buildkite/). This page serves as an installation/technical guide.
+Two images for the cabin cluster's Buildkite agents: **buildkite-agent**, the agent image every
+agent runs (formerly maker-builder, moved here from `MakerHub/src/maker-builder`), and
+**buildkite-unity**, the Unity build lane: buildkite-agent plus a batchmode Linux Unity Editor and the build modules Chordzy needs. Why and how it fits together: [UPGRADE.md](UPGRADE.md).
 
-Meant to be powerful and simple, this implementation requires no changes to the Unity project itself.
+| | |
+|---|---|
+| Unity | `6000.6.5f1` (changeset `3ff58d469c8a`) |
+| Modules | `webgl`, `windows-mono`, `linux-il2cpp`, `mac-mono` |
+| Agent image | `containers.oodalolly.camp/buildkite-agent:dotnet-<sdk>-<date>` (and `:latest`) |
+| Unity base | `containers.oodalolly.camp/maker-builder@sha256:7e0e33…` (the image the amd64 agents run, until buildkite-agent replaces it) |
+| Image | `containers.oodalolly.camp/buildkite-unity:<unity>` |
+| Deployed by | moongate `buildkite/cabin/agent-unity.yaml` |
 
-Derivative of [Gableroux's GitLab Unity3D CI tool](https://gitlab.com/gableroux/unity3d).
-
-Skip to the bottom for help with deployment, determining which Unity versions are available, or building your own versions of the container.
-
-## Capabilities
-
-### Building for Any Platform
-
-The docker container includes `/bin/ci/make.py`. Running this script without any arguments will provide hints as to how to use it.
-
-### Example
-
-Assuming that you are already in the folder which contains the Unity project, here are sample build commands:
-```
-/bin/ci/make.py unity build my-project iOS "Assets/Scenes/Client.unity"
-/bin/ci/make.py unity build my-project Android "Assets/Scenes/Server.unity"
-/bin/ci/make.py unity build my-project StandaloneLinux64 "Assets/Scenes/Server.unity"
-```
-
-The first parameter was the name (just like you'd type in when you use the "Build" window in Unity), and the second is the platform (i.e., one of Unity's `BuildTarget` values). The third defines the scenes to include (comma-separated). Sample output from a build step is as follows:
+## Layout
 
 ```
-[INFO] [Unity] [Build] [Information] [11:14:00:638496] Ready to build.
-[INFO] [Unity] [Build] [Information] [11:14:00:652722] Writing "0.0.1-master+59" to "Assets/Resources/Version.txt"
-[INFO] [Unity] [Build] [Information] [11:14:00:655389] Writing "747516b350f3b98d5eabee17a1890ccf95507642" to "Assets/Resources/Commit.txt"
-[INFO] [Unity] [Build] [Information] [11:14:00:658113] Refreshing assets for "<my-project bin=./bin/StandaloneLinux64/my-project BuildTarget=StandaloneLinux64 scenes=Assets/Scenes/Server.unity >"
-[INFO] [Unity] [Build] [Information] [11:14:00:786332] Asset Refresh Complete.
-[INFO] [Unity] [Build] [Information] [11:14:00:787405] Building "<my-project bin=./bin/StandaloneLinux64/my-project BuildTarget=StandaloneLinux64 scenes=Assets/Scenes/Server.unity >" to "./bin/StandaloneLinux64/my-project"
-[INFO] [Unity] [Build] [Information] [11:14:00:789864] Checking pre-conditions for StandaloneLinux64.
-[INFO] [Unity] [Build] [Information] [11:14:00:790539] BuildPipeline.BuildPlayer "Assets/Scenes/Server.unity" => "./bin/StandaloneLinux64/my-project/my-project"
-[INFO] [Unity] [Build] [Information] [11:14:31:219072] Writing Succeeded to "./bin/StandaloneLinux64/build.json"
-[INFO] [Unity] built 43889536b in 00:00:30.3046029
+agent.Dockerfile         buildkite-agent: Buildkite agent, .NET, Node, Chrome, Playwright, kubectl, ... Version pins.
+build-agent.py           Build (linux/amd64) and push buildkite-agent; prints the digest to pin.
+agent/                   The @openworkshop/maker-builder package (maker-* CLIs), agent config, entrypoint.
+agent/bin/fetch-cached   Build-time helper: take an archive from the host cache, else download it.
+unity.Dockerfile         FROM buildkite-agent; Unity deps, editor, modules, scripts. Holds the version pins.
+build-unity.py           Resolve, build (linux/amd64) and push buildkite-unity; prints the digest to pin.
+unity/unity_release.py   Resolver + installer against Unity's release API (stdlib only, runs in the build).
+unity/bin/unity-editor   xvfb-run wrapper: `unity-editor <args>` = Unity -batchmode <args>; checks /dev/shm.
+unity/bin/unity-license  activate | return | status, per UNITY_LICENSE_MODE.
+unity/bin/unity-entrypoint.sh  Per-replica identity and license state, then maker-builder's entrypoint.
+unity/hooks/             pre-command / pre-exit agent hooks (BUILDKITE_ADDITIONAL_HOOKS_PATHS=/unity/hooks).
+unity/conf/asound.conf   ALSA default → null device (pods have no sound card).
 ```
 
-### Building on iOS
-
-The build agent will automatically run `pod install`, generating the appropriate workspace file. The `ios` agent also has `xcbuild` and `ninja` installed. However, due to [various reasons](https://github.com/facebook/xcbuild/issues/37), a Linux machine cannot actually build for an iOS target (especially when assets are involved). The follownig command, for example, makes it to the `CompileAssetCatalog` step before failing:
+## Building
 
 ```
-xcbuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -project Unity-iPhone -configuration ReleaseForRunning -destination 'Generic iOS Device'
+./build-agent.py                       # buildkite-agent: push :latest and :dotnet-<sdk>-<date>; prints the digest
+./build-agent.py --no-push             # build into the local docker only
+./build-unity.py resolve               # what unity.Dockerfile pins: changeset, archive sizes (~7 GB)
+./build-unity.py resolve 6000.6.6f1    # look up another version
+./build-unity.py                       # build and push; prints the tag and the @sha256 digest
+./build-unity.py --no-push             # build into the local docker only
 ```
 
-To actually build the `.app`, you can download the resulting project artifact onto a Mac OSX build machine in order to build the project with Xcode. `xcbuild` may still be useful for running unit tests and the like.
+Each Dockerfile has its own `<name>.Dockerfile.dockerignore`, so the agent build sees only `agent/`
+and the Unity build only `unity/`. Agents pull with `IfNotPresent`, so deploy buildkite-agent by digest
+(or its dated tag), never `:latest`.
 
-### Versioning
+Requires `docker buildx` with a `linux/amd64` builder and push access to `containers.oodalolly.camp`.
+On Docker Desktop, raise Settings → Resources → Disk usage limit to ~120 GB: the build VM needs the
+~19 GB of Unity layers, their compressed copies for the push, and the 7 GB of archives at once.
 
-Careful eyes will notice that the CI automatically writes a `Version.txt` and `Commit.txt` to the `Resources` directory, so that the runtime project can be aware of these values. You can use the `git tag -a v0.0.1` to specify the current SemVer. The CI will automatically determine the branch and build number (`master` and `59` in the example above), as well as the Git commit SHA.
+**Downloads happen once.** `build-unity.py` keeps Unity's archives in `~/.cache/unity3d-buildkite/downloads`
+(`--cache-dir` or `$UNITY_DOWNLOAD_CACHE` to move it) and fetches only what is missing (a file counts as
+cached when its size matches the API's). It hands them to the build as two read-only named contexts,
+`unity-editor-downloads` and `unity-module-downloads` (hard links under `.../contexts/`, so no extra
+disk). The install steps read from those; their log says `using cached` per archive, or
+`not cached, downloading` if something slipped through. So a rebuild, a `docker buildx prune`, or a new
+maker-builder base re-extracts from the Mac's disk and never touches the network. Delete old versions'
+archives from the cache by hand. A plain `docker build` without build-unity.py still works but downloads.
+Unity adds about 19 GB to maker-builder (per the release API's installed sizes: editor 9.3 GB, webgl
+7.4, mac-mono 1.5, windows-mono 0.8–1.0, linux-il2cpp 0.3). The editor and the modules are separate
+layers, so changing modules does not re-download the editor.
 
-### Headless Servers
+`build-agent.py` does the same for maker-builder's versioned archives (buildkite-agent, AWS CLI,
+.NET SDK, regctl, kubectl): one directory per archive and version under
+`~/.cache/unity3d-buildkite/agent/`, each passed as its own `dl-<name>` context, so bumping one tool
+re-runs only its layer and those after it. Unversioned downloads (Chrome stable, apt, npm, Playwright's
+Chromium) still come from the network whenever their layer rebuilds.
 
-In addition, this CI can build a docker container for a headless server:
+**NAS mirror.** With `$BUILD_ARTIFACTS_PATH` set (e.g. `/Volumes/cluster/buildkite/artifacts`), both
+scripts restore any missing archive from `$BUILD_ARTIFACTS_PATH/unity3d-buildkite/` (same layout:
+`downloads/`, `agent/`) before downloading, and copy newly downloaded ones back there once the downloads
+are done, before the docker build, so a failed build still keeps them. `contexts/` is not mirrored. If the
+share is not mounted, the scripts warn and carry on without it. See `download_cache.py`.
 
-```
-/bin/ci/make.py docker build my-project StandaloneLinux64 inzania
-```
+**Bumping Unity:** set `UNITY_VERSION` and `UNITY_CHANGESET` in unity.Dockerfile (`./build-unity.py resolve
+<version>` prints the changeset; the build refuses a mismatch), build, then update the digest and the
+`unity_version` agent tag in moongate's `cabin/agent-unity.yaml`. Chordzy's `version.env` should move
+in the same change.
 
-This will take the output from the unity build step and package it into a docker container that can be deployed to a server.
+**Bumping buildkite-agent:** change the version `ARG`s in agent.Dockerfile, `./build-agent.py`, pin the
+printed digest in moongate's `agent-amd64-patch.yaml`, then set unity.Dockerfile's `BASE_IMAGE` to it
+and rebuild the lane.
 
-### Advanced Configuration
+How the installer lays out modules (verified on 6000.6.5f1): the editor and `TAR_XZ` modules are
+rooted at the install root; `PKG` modules are xar archives whose cpio payload is rooted at the module's
+`destination` (their macOS pre/postinstall scripts are not run); every download is md5-checked against
+the API's `integrity`. A Hub-style `modules.json` and a `version` file are written to `$UNITY_PATH`.
 
-Part of the "magic" is accomplished by the Unity build tool is to copy some build tools into `Editor/UnityCI` (within your project) to assist in the build process. If you overwrite the `--unity_func` flag to the build command, where the default value is `Editor.UnityCI.Build.Compile`, it will instead call your custom build function and not copy the pre-packaged build scripts.
+## Using the lane
 
-### Running Locally
+Agents carry the maker-builder tags plus `unity=true,unity_version=<ver>`, at priority 1 (the plain
+amd64 agents are 2, so ordinary Linux steps prefer them). A Chordzy step:
 
-The build scripts should work on your host machine, instead of within the Docker container, if you prefer. Just run the `bin/ci/make.py` script from this repository.
-
-### Sample Buildkite Pipeline
-
-Here is my pipeline for one of the games I'm working on. It builds for Linux, then logs in to ECR and pushes the docker container to AWS, as well as Android and iOS. It assumes that the CI is deployed via the Kubernetes helm chart, below, which supplies the agent tags (`unity_module`).
-
-```
-steps:
-  - command: '/bin/ci/agent.sh unity build sample-project StandaloneLinux64 "Assets/Scenes/Server.unity" && /bin/ci/make.py docker build cardgrid StandaloneLinux64 inzania/sample-project'
-    label: ":linux: server :docker:"
-    agents:
-      unity_module: "true"
-    artifact_paths:
-      - "bin/StandaloneLinux64/**"
-
-  - command: '/bin/ci/agent.sh unity build sample-project Android "Assets/Scenes/Client.unity"'
-    label: ":android: android"
-    agents:
-      unity_module: "android"
-    artifact_paths:
-      - "bin/Android/**"
-
-  - command: '/bin/ci/agent.sh unity build sample-project iOS "Assets/Scenes/Client.unity"'
-    label: ":ios: iOS"
-    agents:
-      unity_module: "ios"
-    artifact_paths:
-      - "bin/iOS/**"
-```
-
-## Deployment
-
-The easiest way to deploy is to use the Helm chart, below. But you could also just run the Docker container:
-
-```
-docker run --rm inzania/unity3d-buildkite:latest
+```yaml
+- label: ":unity: compile"
+  command: unity-editor -nographics -quit -projectPath ChordzyGame -logFile -
+  agents: { os: linux, unity: "true" }
 ```
 
-However, you will need a Unity license. Once the image is running, open a shell in the container and run:
+`unity-editor` needs `/dev/shm` ≥ 1 GiB (Unity 6.6 exits silently below it). The StatefulSet mounts a
+2 GiB memory emptyDir; locally use `docker run --shm-size=1g`.
 
-```
-su -m - "buildkite-agent" -c "/bin/ci/make.py unity activate --unity_username=XXX --unity_password=YYY"
-```
+## Licensing
 
-This will output the license file and instructions for activating it. Once done, you can set the license file either by mounting it to `/var/lib/buildkite-agent/.local/share/unity3d/Unity/Unity_lic.ulf` or with an enviroment variable. There are two special environment variables:
+`UNITY_LICENSE_MODE` picks one of three flows (UPGRADE.md §3). The image is the same for all three.
 
-* `SSH_KEYS`: if set, the contents will be written to the `~/.ssh/id_rsa` file as a Buildkite pre-checkout hook.
-* `UNITY_LICENSE`: if set, the contents will be written to the Unity license file location for activation.
+| Mode | When | Per job | Setup |
+|---|---|---|---|
+| `persisted` (default) | Personal or Pro seat; the pod behaves like a native machine | nothing | `kubectl -n btd exec -it buildkite-agent-unity-0 -- unity-license activate` once per replica (prompts for the password; nothing stored) |
+| `hooks` | the persisted activation does not survive pod restarts | `pre-command` activates, `pre-exit` returns | `unity_email` / `unity_password` in the `buildkite-agent` secret; 2FA off |
+| `floating` | Pro + Build Server, Unity Licensing Server on a persistent host | `pre-command` leases, `pre-exit` returns the lease | `UNITY_LICENSING_SERVER` (and optional `UNITY_LICENSING_TOOLSET`) |
 
-### Kubernetes Helm Chart
+**persisted.** `UNITY_STATE_DIR` (the StatefulSet sets `/buildkite/builds/.unity-state/<pod>`, on the
+node's hostPath) keeps a per-replica `/etc/machine-id` plus `~/.local/share/unity3d`,
+`~/.config/unity3d` and `/usr/share/unity3d`, so an activation should survive a pod restart the way it
+survives a reboot. **That is UPGRADE.md's Phase 1 question and is not verified yet**: Unity may also
+bind to things a pod cannot keep (its veth MAC address). Test: activate, delete the pod, then run a
+compile. `Machine bindings don't match` means switch to `hooks`. `unity-license status` shows what is
+persisted.
 
-Included in this repository is a Helm chart to make deployment easy. After checking out this repository, from the root folder:
+**hooks.** Every job activates and returns. A pod killed mid-job leaves its device on the seat; return
+stale devices from the Unity ID page if activation starts failing with "already active on two devices".
 
-```
-helm upgrade --install builder helm/unity3d-buildkite \
-  --set "env.UNITY_LICENSE=contents_of_license_file" \
-  --set "env.BUILDKITE_AGENT_TOKEN=foo"
-```
+**floating.** The entrypoint writes `/usr/share/unity3d/config/services-config.json`. Leases expire on
+the server if a pod dies (set `floatingLicenseExpirationInMinutes` to ~120). Keep a Buildkite
+`concurrency_group` on the Unity steps equal to the Build Server seat count.
 
-Anything you provide to `--set "env.XXX=YYY"` will be stored as a secret and passed as an environment value. This makes it useful for configuring Buildkite, passing in credentials, etc. Other relevant configuration values can be found in `helm/unity3d-buildkite/values.yaml` within this repository.
+Any mode: a step that never opens Unity can skip the hooks with `env: { UNITY_LICENSE_SKIP: "1" }`.
+Flags follow GameCI (`--activate-all --include-personal`, `--return-ulf`, `--acquire-floating`,
+`--return-floating`). Never commit `.ulf`/`.alf` files; a `.ulf` is machine-bound on Unity 6 anyway.
 
+## History
 
-## Versions & Building
-
-See the [Docker Hub page](https://hub.docker.com/r/inzania/unity3d-buildkite/tags) to determine which versions of Unity (and other tags) are currently available. If your version is not present, or to maximize security, you can build your own container.
-
-Included in this repository is `build.py`. It has an interactive prompt to help build for new versions.
+Until 2020 this repo built `inzania/unity3d-buildkite` images on Ubuntu 18.04 for Unity 2019 with a
+Helm chart and a shared `.ulf`. That design does not work on Unity 6 (UPGRADE.md §1.1, §3.1) and was
+removed; see git history before this rewrite.

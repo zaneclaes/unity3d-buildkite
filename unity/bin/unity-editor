@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Batchmode Unity under a throwaway X display, as GameCI's unity-editor does. Pass Unity arguments
+# as usual, minus -batchmode:
+#   unity-editor -nographics -quit -projectPath ChordzyGame -logFile -
+# Unity 6.6 hard-fails on Docker's 64 MB /dev/shm default before it writes a log line, so this
+# refuses to start without >= 1 GiB (the StatefulSet mounts a Memory emptyDir there).
+set -euo pipefail
+: "${UNITY_PATH:?UNITY_PATH is not set}"
+
+if [[ "${UNITY_SKIP_SHM_CHECK:-}" != "1" ]]; then
+  shm_kb="$(df -Pk /dev/shm | awk 'NR==2 {print $2}')"
+  if (( shm_kb < 1048576 )); then
+    echo "[unity-editor] /dev/shm is $((shm_kb / 1024)) MiB; Unity 6.6 needs >= 1 GiB." >&2
+    echo "[unity-editor] Mount an emptyDir {medium: Memory} at /dev/shm (docker: --shm-size=1g)," >&2
+    echo "[unity-editor] or set UNITY_SKIP_SHM_CHECK=1." >&2
+    exit 70
+  fi
+fi
+
+exec xvfb-run -a -e /dev/stdout -s "-screen 0 1024x768x24" "$UNITY_PATH/Editor/Unity" -batchmode "$@"

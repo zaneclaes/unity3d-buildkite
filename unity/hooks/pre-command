@@ -1,0 +1,12 @@
+#!/bin/bash
+# Agent hook from the image (BUILDKITE_ADDITIONAL_HOOKS_PATHS=/unity/hooks), run after the shared
+# NFS hooks in /buildkite/hooks. Takes a license for the job when the mode needs one per job.
+# A step that never opens Unity can skip it with `env: {UNITY_LICENSE_SKIP: "1"}`.
+set -euo pipefail
+
+[[ "${UNITY_LICENSE_SKIP:-}" == "1" ]] && exit 0
+case "${UNITY_LICENSE_MODE:-persisted}" in
+  hooks|floating)
+    echo "--- :unity: license (${UNITY_LICENSE_MODE})"
+    unity-license activate ;;
+esac

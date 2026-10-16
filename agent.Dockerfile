@@ -1,0 +1,227 @@
+# buildkite-agent (formerly maker-builder): the Buildkite agent image every cabin agent runs, and the base of unity.Dockerfile.
+# Derived from https://github.com/buildkite/agent/tree/main/packaging/docker. Moved here from
+# MakerHub/src/maker-builder; build with ./build-agent.py, which reads the defaults below.
+
+# The versioned archives (buildkite-agent, AWS CLI, .NET SDK, regctl, kubectl) come from a host-side
+# cache, never the network, when built by ./build-agent.py: it downloads each once into
+# ~/.cache/unity3d-buildkite/agent/<name>-<version>/ and replaces these empty stages with
+# `--build-context dl-<name>=<dir>`. One context per archive, so bumping one leaves the others' layers
+# cached. A plain `docker build` sees them empty and fetch-cached downloads instead (and says so).
+FROM scratch AS dl-buildkite
+FROM scratch AS dl-awscli
+FROM scratch AS dl-dotnet
+FROM scratch AS dl-regctl
+FROM scratch AS dl-kubectl
+FROM scratch AS dl-mysql
+
+FROM docker.io/debian:trixie-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ARG BUILDKITE_VERSION="4.1.0"
+ENV BUILDKITE_VERSION="${BUILDKITE_VERSION}"
+
+RUN apt-get update -qq -y && apt-get upgrade -qq -y && apt-get install -qq -y --no-install-recommends \
+      apt-transport-https \
+      curl \
+      ca-certificates \
+      bash \
+      git \
+      gnupg-agent \
+      jq \
+      openssh-client \
+      perl \
+      rsync \
+      wget \
+      gpg \
+      binutils \
+      dnsutils \
+      unzip \
+      zip \
+      buildah \
+      crun \
+      netavark \
+      python3-pip \
+      libatomic1 \
+      libicu76 \
+      libfontconfig1 \
+      nsis \
+      osslsigncode \
+      cmake \
+      pkg-config \
+      libasound2-dev \
+      binutils \
+      build-essential \
+      libcurl4-openssl-dev \
+      xz-utils \
+      libaio1t64 \
+      libnuma1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY agent/bin/fetch-cached /usr/local/bin/fetch-cached
+
+ENV BUILDKITE_AGENT_CONFIG=/buildkite/buildkite-agent.cfg \
+    PATH="/usr/local/bin:${PATH}"
+
+RUN mkdir -p /buildkite/builds /buildkite/hooks /buildkite/plugins \
+    && curl -Lfs -o /usr/local/bin/ssh-env-config.sh \
+        https://raw.githubusercontent.com/buildkite/docker-ssh-env-config/master/ssh-env-config.sh \
+    && chmod +x /usr/local/bin/ssh-env-config.sh
+
+# Install & configure buildkite (extracted at /, so the entrypoint execs /buildkite-agent)
+ARG BUILDKITE_ARCH="amd64"
+ENV BUILDKITE_ARCH="$BUILDKITE_ARCH"
+RUN --mount=type=bind,from=dl-buildkite,target=/downloads \
+    fetch-cached "https://github.com/buildkite/agent/releases/download/v${BUILDKITE_VERSION}/buildkite-agent-linux-${BUILDKITE_ARCH}-${BUILDKITE_VERSION}.tar.gz" /tmp/buildkite-agent.tar.gz \
+  && tar -xf /tmp/buildkite-agent.tar.gz -C / \
+  && rm /tmp/buildkite-agent.tar.gz \
+  && /buildkite-agent --version
+COPY agent/buildkite-agent.cfg /buildkite/buildkite-agent.cfg
+
+#### DEPENDENCIES ####
+
+# AWS CLI v2; v1 entered maintenance in August 2026.
+ARG AWSCLI_VERSION="2.37.8"
+ENV AWS_PAGER="" AWS_CLI_AUTO_PROMPT=off
+RUN --mount=type=bind,from=dl-awscli,target=/downloads \
+    fetch-cached "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWSCLI_VERSION}.zip" /tmp/awscli.zip \
+  && unzip -q /tmp/awscli.zip -d /tmp \
+  && /tmp/aws/install \
+  && rm -rf /tmp/aws /tmp/awscli.zip \
+  && aws --version
+
+# Dotnet
+ENV DOTNET_ROOT=/root/dotnet
+ENV PATH=$PATH:$DOTNET_ROOT:/root/.dotnet/tools
+ARG DOTNET_ARCH="x64"
+
+# SDK upgrade? Visit https://dotnet.microsoft.com/en-us/download/dotnet
+# 10.0.401 ships runtime 10.0.12, the first without dotnet/runtime#131267 (a GC hole that SIGSEGVs the
+# Chordzy test host; Chordzy Docs/Plans/TUNETESTS-HANG-REPAIR.md V1). Never go below it.
+ARG DOTNET_VERSION="10.0.401"
+
+RUN --mount=type=bind,from=dl-dotnet,target=/downloads \
+    fetch-cached "https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_VERSION}/dotnet-sdk-${DOTNET_VERSION}-linux-${DOTNET_ARCH}.tar.gz" /tmp/dotnet-sdk.tar.gz \
+  && mkdir -p "$DOTNET_ROOT" \
+  && tar zxf /tmp/dotnet-sdk.tar.gz -C "$DOTNET_ROOT" \
+  && rm /tmp/dotnet-sdk.tar.gz \
+  && dotnet --version \
+  && chmod 0711 /root
+# Chordzy remote development (Chordzy Docs/Plans/DEV-SPEEDUP.md A2) runs unfinished source in a buildah
+# --isolation=oci container of this image as uid 65532, calling /root/dotnet/dotnet. buildah only
+# recommends crun, so it is named above. /root is traversable but not listable (0711), so that uid
+# reaches the (already world-readable) SDK and nothing else under /root.
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+
+# Node
+ENV NODE_VERSION=24.21.0
+ENV NVM_VERSION=0.40.8
+RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh -o /tmp/install-nvm.sh \
+  && bash /tmp/install-nvm.sh \
+  && rm /tmp/install-nvm.sh
+ENV NVM_DIR=/root/.nvm
+RUN . "$NVM_DIR/nvm.sh" && nvm install ${NODE_VERSION}
+RUN . "$NVM_DIR/nvm.sh" && nvm use v${NODE_VERSION}
+RUN . "$NVM_DIR/nvm.sh" && nvm alias default v${NODE_VERSION}
+ENV PATH="/root/.nvm/versions/node/v${NODE_VERSION}/bin/:${PATH}"
+RUN node --version
+RUN npm --version
+
+# Package managers and bundler. Yarn Classic remains the package's supported CLI.
+ARG NPM_VERSION="12.2.0"
+ARG YARN_VERSION="1.22.22"
+ARG ESBUILD_VERSION="0.28.2"
+RUN npm install -g "npm@${NPM_VERSION}" "yarn@${YARN_VERSION}" "esbuild@${ESBUILD_VERSION}" \
+  && npm --version && yarn --version && esbuild --version
+
+#### BROWSERS (Chordzy CI: Lighthouse, Playwright smokescreen) ####
+
+# Google Chrome stable with its full runtime dependency set (libnspr4, libnss3, fonts, ...), so
+# Chordzy's ci/lighthouse.sh finds `google-chrome-stable` on PATH and never downloads or repairs one
+# at run time (Chordzy Docs/Plans/CI-LIGHTHOUSE-CHROME-START-REPAIR.md). Google ships amd64 only;
+# other architectures get Debian's chromium. Xvfb + Mesa give a headless GL display for the planned
+# Linux app smokescreen (Chordzy Docs/Plans/SMOKESCREEN-DETERMINISTIC.md A1/A3).
+RUN apt-get update -qq -y \
+  && if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
+       wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+       && apt-get install -qq -y --no-install-recommends /tmp/chrome.deb \
+       && rm -f /tmp/chrome.deb; \
+     else \
+       apt-get install -qq -y --no-install-recommends chromium \
+       && ln -sf /usr/bin/chromium /usr/local/bin/google-chrome-stable; \
+     fi \
+  && apt-get install -qq -y --no-install-recommends \
+       xvfb xauth libgl1-mesa-dri libegl1 libgles2 libgbm1 \
+       fonts-liberation fonts-noto-color-emoji \
+  && rm -rf /var/lib/apt/lists/* \
+  && google-chrome-stable --version
+
+# Lighthouse CI, pinned exactly as Chordzy's ci/lighthouse.sh pins it (LHCI_VERSION). Installed
+# globally and also warmed into the npx cache, so `npx --yes @lhci/cli@<ver>` resolves offline.
+ARG LHCI_VERSION="0.15.1"
+RUN npm install -g "@lhci/cli@${LHCI_VERSION}" \
+  && npx --yes "@lhci/cli@${LHCI_VERSION}" --version \
+  && lhci --version
+
+# Playwright: the CLI plus the Chromium build and system libraries its version expects, in a fixed
+# browsers path. Microsoft.Playwright (.NET) at the same version finds the same build there.
+ARG PLAYWRIGHT_VERSION="1.63.0"
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update -qq -y \
+  && npm install -g "playwright@${PLAYWRIGHT_VERSION}" \
+  && playwright install --with-deps chromium \
+  && rm -rf /var/lib/apt/lists/* \
+  && playwright --version
+
+# MySQL server for Chordzy's development requests (Chordzy Docs/Plans/DEV-SPEEDUP.md A4): migration
+# rehearsal and the web-runtime recipe start a private, loopback-only mysqld inside the request's
+# --network=none sandbox, as uid 65532, with a throwaway datadir. Same version as production (RDS
+# `SELECT VERSION()` = 8.4.8 on 2026-10-15). Oracle's generic minimal tarball, because Debian ships
+# only MariaDB; trixie's t64 libaio needs the libaio.so.1 name the tarball links against. No service,
+# no datadir and no account are created here: nothing runs until a request starts it.
+ARG MYSQL_VERSION="8.4.8"
+ARG MYSQL_SHA256="8ad430f3f6c63d5ae3d10fb76cf8bd73d7a91143a21d1b5e4c6bf701910a0ef0"
+RUN --mount=type=bind,from=dl-mysql,target=/downloads \
+    fetch-cached "https://cdn.mysql.com/archives/mysql-8.4/mysql-${MYSQL_VERSION}-linux-glibc2.28-x86_64-minimal.tar.xz" /tmp/mysql.tar.xz \
+  && echo "${MYSQL_SHA256}  /tmp/mysql.tar.xz" | sha256sum --check \
+  && mkdir -p /opt/mysql \
+  && tar -xJf /tmp/mysql.tar.xz -C /opt/mysql --strip-components=1 \
+  && rm /tmp/mysql.tar.xz \
+  && ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 \
+  && ln -sf /opt/mysql/bin/mysqld /opt/mysql/bin/mysql /opt/mysql/bin/mysqladmin /usr/local/bin/ \
+  && ! ldd /opt/mysql/bin/mysqld | grep 'not found' \
+  && mysqld --version
+
+# regctl for package mgmt
+ARG REGCTL_VERSION="0.11.6"
+RUN --mount=type=bind,from=dl-regctl,target=/downloads \
+    fetch-cached "https://github.com/regclient/regclient/releases/download/v${REGCTL_VERSION}/regctl-linux-amd64" /tmp/regctl \
+  && install -o root -g root -m 0755 /tmp/regctl /usr/local/bin/regctl \
+  && rm /tmp/regctl \
+  && regctl version
+
+# Kubectl
+ARG KUBECTL_VERSION="1.37.1"
+RUN --mount=type=bind,from=dl-kubectl,target=/downloads \
+    fetch-cached "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" /tmp/kubectl \
+  && fetch-cached "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256" /tmp/kubectl.sha256 \
+  && echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check \
+  && install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl \
+  && rm /tmp/kubectl /tmp/kubectl.sha256 \
+  && kubectl version --client
+
+# The @openworkshop/maker-builder package (maker-* CLIs). Its dependencies are installed here from
+# the lockfile rather than copied from a host node_modules.
+COPY agent/ /maker-builder/
+RUN cd /maker-builder \
+  && yarn install --production --frozen-lockfile --non-interactive \
+  && npm install -g /maker-builder/ \
+  && command -v maker-env maker-pipeline maker-container
+
+# Entry
+# v4 replacement for the deployed agent's BUILDKITE_CANCEL_GRACE_PERIOD=1200.
+ENV BUILDKITE_CANCEL_SIGNAL_TIMEOUT=1200s
+ENV DOCKER_USER="inzania"
+VOLUME /buildkite
+RUN chmod +x /maker-builder/scripts/*
+ENTRYPOINT ["/maker-builder/scripts/docker-entrypoint.sh"]
+CMD ["start"]

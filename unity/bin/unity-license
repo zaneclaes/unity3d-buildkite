@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Unity license activation for the lane, by UNITY_LICENSE_MODE (README "Licensing"):
+#
+#   persisted (default)  The pod is one more device on the seat, like a native box. Activate once per
+#                        replica by hand; the state lives under UNITY_STATE_DIR (see unity-entrypoint).
+#                          kubectl exec -it buildkite-agent-unity-0 -- unity-license activate
+#                        Prompts for the password when UNITY_PASSWORD is unset; nothing is stored.
+#   hooks                Activate in pre-command and return in pre-exit, every job, with
+#                        UNITY_EMAIL/UNITY_PASSWORD from the agent secret (2FA must be off).
+#   floating             Lease from a Unity Licensing Server (UNITY_LICENSING_SERVER) per job and
+#                        return it on exit (Pro + Build Server).
+#
+#   unity-license activate|return|status
+#
+# Flags are GameCI's (game-ci/cli dist/platforms/ubuntu/steps): --activate-all --include-personal,
+# --return-ulf, --acquire-floating, --return-floating <token>. Credentials are never echoed.
+set -euo pipefail
+: "${UNITY_PATH:?UNITY_PATH is not set}"
+
+MODE="${UNITY_LICENSE_MODE:-persisted}"
+CLIENT="${UNITY_LICENSING_CLIENT_PATH:-$UNITY_PATH/Editor/Data/Resources/Licensing/Client/Unity.Licensing.Client}"
+# One floating lease per job; the token is what --return-floating needs.
+TOKEN_FILE="${UNITY_FLOATING_TOKEN_FILE:-/tmp/unity-floating-${BUILDKITE_JOB_ID:-manual}}"
+
+say() { echo "[unity-license] $*"; }
+
+activate_seat() {
+  local email="${UNITY_EMAIL:-}" password="${UNITY_PASSWORD:-}"
+  if [[ -z "$email" ]]; then
+    [[ -t 0 ]] || { say "UNITY_EMAIL is not set"; exit 1; }
+    read -r -p "Unity ID email: " email
+  fi
+  if [[ -z "$password" ]]; then
+    [[ -t 0 ]] || { say "UNITY_PASSWORD is not set"; exit 1; }
+    read -r -s -p "Unity ID password for $email: " password
+    echo
+  fi
+  local out rc=0
+  out="$("$CLIENT" --activate-all --include-personal --username "$email" --password "$password" 2>&1)" || rc=$?
+  echo "$out"
+  if (( rc != 0 )); then
+    if grep -qi "Machine bindings don't match" <<<"$out"; then
+      say "machine binding mismatch: this pod's identity changed since it was activated."
+      say "Return the stale device from the Unity ID page, then activate again."
+    fi
+    exit "$rc"
+  fi
+  say "activated on $(hostname) (machine-id $(cat /etc/machine-id 2>/dev/null || echo none))"
+}
+
+return_seat() {
+  local out rc=0
+  out="$("$CLIENT" --return-ulf 2>&1)" || rc=$?
+  echo "$out"
+  # Nothing to return is fine (entitlement seats write no .ulf).
+  if grep -q "Ulf license file not found" <<<"$out"; then return 0; fi
+  return "$rc"
+}
+
+acquire_floating() {
+  : "${UNITY_LICENSING_SERVER:?UNITY_LICENSING_SERVER is not set}"
+  local out
+  out="$("$CLIENT" --acquire-floating 2>&1)"
+  echo "$out"
+  # The token is the second quoted string of the client's reply (GameCI parses it the same way).
+  grep -o '"[^"]*"' <<<"$out" | tr -d '"' | sed -n 2p > "$TOKEN_FILE"
+  [[ -s "$TOKEN_FILE" ]] || { say "no floating license token in the client's reply"; exit 1; }
+  say "leased floating license $(cat "$TOKEN_FILE")"
+}
+
+return_floating() {
+  if [[ ! -s "$TOKEN_FILE" ]]; then
+    say "no floating lease held by this job"
+    return 0
+  fi
+  "$CLIENT" --return-floating "$(cat "$TOKEN_FILE")"
+  rm -f "$TOKEN_FILE"
+}
+
+status() {
+  say "mode=$MODE host=$(hostname) machine-id=$(cat /etc/machine-id 2>/dev/null || echo none)"
+  say "state=${UNITY_STATE_DIR:-<not persisted>}"
+  for d in "$HOME/.local/share/unity3d" "$HOME/.config/unity3d" /usr/share/unity3d; do
+    [[ -e "$d" ]] || continue
+    say "$d -> $(readlink -f "$d")"
+    find -L "$d" -maxdepth 3 \( -name '*.ulf' -o -name '*.xml' -o -name 'services-config.json' \) 2>/dev/null \
+      | sed 's/^/    /'
+  done
+  [[ -s "$TOKEN_FILE" ]] && say "floating lease: $(cat "$TOKEN_FILE")"
+  return 0
+}
+
+case "${1:-}" in
+  activate)
+    case "$MODE" in
+      persisted|hooks) activate_seat ;;
+      floating) acquire_floating ;;
+      *) say "unknown UNITY_LICENSE_MODE=$MODE"; exit 2 ;;
+    esac ;;
+  return)
+    case "$MODE" in
+      persisted|hooks) return_seat ;;
+      floating) return_floating ;;
+      *) say "unknown UNITY_LICENSE_MODE=$MODE"; exit 2 ;;
+    esac ;;
+  status) status ;;
+  *) echo "usage: unity-license activate|return|status" >&2; exit 2 ;;
+esac

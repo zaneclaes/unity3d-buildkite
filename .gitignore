@@ -1,5 +1,9 @@
 .DS_Store
-bin/unity.ulf
-docker/Dockerfile
-docker/frameworks
 __pycache__/
+# Unity license material never belongs in the repo or the image.
+*.ulf
+*.alf
+services-config.json
+# maker-builder package
+agent/node_modules/
+agent/dist/
