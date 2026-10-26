@@ -49,4 +49,4 @@ if [[ -n "${UNITY_LICENSING_SERVER:-}" ]]; then
   echo "[unity] licensing server $UNITY_LICENSING_SERVER${UNITY_LICENSING_TOOLSET:+ toolset $UNITY_LICENSING_TOOLSET}"
 fi
 
-exec /maker-builder/scripts/docker-entrypoint.sh "$@"
+exec /usr/bin/tini -- /maker-builder/scripts/docker-entrypoint.sh "$@"

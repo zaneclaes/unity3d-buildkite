@@ -25,6 +25,7 @@ RUN apt-get update -qq -y && apt-get upgrade -qq -y && apt-get install -qq -y --
       curl \
       ca-certificates \
       bash \
+      tini \
       git \
       gnupg-agent \
       jq \

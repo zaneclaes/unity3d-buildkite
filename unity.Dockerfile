@@ -28,6 +28,7 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # already come from maker-builder. cpio/xz-utils are for the installer.
 RUN apt-get update -qq -y && apt-get install -qq -y --no-install-recommends \
       cpio \
+      tini \
       xz-utils \
       git-lfs \
       atop \
